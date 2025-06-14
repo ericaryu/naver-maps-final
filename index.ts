@@ -2,32 +2,29 @@ const express = require("express");
 const axios = require("axios");
 const app = express();
 
-// 🔄 주소 또는 건물명 → 좌표 변환 (keyword 기반)
-async function getCoordinatesFromAddress(query) {
-  const url = "https://dapi.kakao.com/v2/local/search/keyword.json";
+// 주소 → 좌표 변환
+async function getCoordinatesFromAddress(address) {
+  const url = "https://dapi.kakao.com/v2/local/search/address.json";
   const headers = {
     Authorization: `KakaoAK ${process.env.KAKAO_API_KEY}`,
   };
-
   const response = await axios.get(url, {
-    params: { query },
+    params: { query: address },
     headers,
   });
 
   const { documents } = response.data;
-  if (documents.length === 0) throw new Error("주소 또는 장소명을 찾을 수 없습니다.");
-
+  if (!documents.length) throw new Error("주소를 찾을 수 없습니다.");
   const { x, y } = documents[0];
   return { x, y };
 }
 
-// 🔄 길찾기 (거리/시간)
+// 경로 거리/시간 계산
 async function getDirection(origin, destination) {
   const url = "https://apis-navi.kakaomobility.com/v1/directions";
   const headers = {
     Authorization: `KakaoAK ${process.env.KAKAO_API_KEY}`,
   };
-
   const response = await axios.get(url, {
     params: {
       origin: `${origin.x},${origin.y}`,
@@ -40,7 +37,7 @@ async function getDirection(origin, destination) {
   return { distance, duration };
 }
 
-// 🗺️ 지도 이미지 URL 생성
+// 지도 이미지 URL 생성
 function getMapImageUrl(start, goal) {
   const url = "https://dapi.kakao.com/v2/maps/staticmap";
   const params = new URLSearchParams({
@@ -51,33 +48,62 @@ function getMapImageUrl(start, goal) {
   return `${url}?${params.toString()}`;
 }
 
-// 📍 /route-info?from=주소1&to=주소2
-app.get("/route-info", async (req, res) => {
-  const { from, to } = req.query;
-  if (!from || !to) {
-    return res.status(400).json({ error: "from and to query parameters are required" });
-  }
+// 테스트용 화장실 후보 (임시)
+const restrooms = [
+  {
+    name: "서울시청 공중화장실",
+    address: "서울특별시 중구 세종대로 110",
+    x: "126.9779692",
+    y: "37.566535",
+  },
+  {
+    name: "광화문역 5번 출구 공중화장실",
+    address: "서울특별시 종로구 세종대로 175",
+    x: "126.9769",
+    y: "37.5714",
+  },
+  {
+    name: "을지로입구역 1번 출구 공중화장실",
+    address: "서울특별시 중구 남대문로 119",
+    x: "126.982715",
+    y: "37.566324",
+  },
+];
+
+// 추천 API
+app.get("/recommend-restrooms", async (req, res) => {
+  const { address } = req.query;
+  if (!address) return res.status(400).json({ error: "address is required" });
 
   try {
-    const origin = await getCoordinatesFromAddress(from);
-    const destination = await getCoordinatesFromAddress(to);
+    const userLoc = await getCoordinatesFromAddress(address);
 
-    const { distance, duration } = await getDirection(origin, destination);
-    const imageUrl = getMapImageUrl(origin, destination);
+    const results = await Promise.all(
+      restrooms.map(async (r) => {
+        const direction = await getDirection(userLoc, { x: r.x, y: r.y });
+        return {
+          name: r.name,
+          address: r.address,
+          distance: direction.distance,
+          duration: direction.duration,
+          mapImageUrl: getMapImageUrl(userLoc, { x: r.x, y: r.y }),
+        };
+      })
+    );
+
+    const byDistance = [...results].sort((a, b) => a.distance - b.distance)[0];
+    const byDuration = [...results].sort((a, b) => a.duration - b.duration)[0];
 
     res.json({
-      origin: from,
-      destination: to,
-      distance,
-      duration,
-      imageUrl,
+      currentLocation: address,
+      recommendations: [
+        { type: "가장 가까운 화장실", ...byDistance },
+        { type: "가장 빨리 도착하는 화장실", ...byDuration },
+      ],
     });
-  } catch (error) {
-    console.error("Error:", error.response?.data || error.message);
-    res.status(error.response?.status || 500).json({
-      error: error.message,
-      details: error.response?.data || null,
-    });
+  } catch (err) {
+    console.error("Error in /recommend-restrooms:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
