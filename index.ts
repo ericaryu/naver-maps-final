@@ -54,3 +54,5 @@ module.exports = app;
 // Trigger Vercel production deploy
 // Trigger redeploy to apply environment variables
 // Trigger redeploy to apply environment variables again
+// Switched to test2 Naver API key
+
