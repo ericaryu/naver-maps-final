@@ -1,122 +1,75 @@
 const express = require("express");
 const axios = require("axios");
-require("dotenv").config();
-
 const app = express();
-app.use(express.json());
 
-const KAKAO_API_KEY = process.env.KAKAO_API_KEY;
-
-// 주소 → 좌표 변환
-async function geocode(address) {
+// 주소 → 좌표
+async function getCoordinatesFromAddress(address) {
   const url = "https://dapi.kakao.com/v2/local/search/address.json";
-  const headers = { Authorization: `KakaoAK ${KAKAO_API_KEY}` };
-  const res = await axios.get(url, { params: { query: address }, headers });
-
-  const doc = res.data.documents[0];
-  if (!doc) throw new Error("주소를 찾을 수 없습니다.");
-  return { x: doc.x, y: doc.y };
-}
-
-// 좌표 기준 화장실 검색 (category_group_code: 'PM9' → 공중화장실)
-async function searchNearbyRestrooms(x, y) {
-  const url = "https://dapi.kakao.com/v2/local/search/category.json";
-  const headers = { Authorization: `KakaoAK ${KAKAO_API_KEY}` };
-
-  const res = await axios.get(url, {
-    params: {
-      category_group_code: "PM9",
-      x,
-      y,
-      radius: 3000, // 3km 이내
-      sort: "distance",
-    },
-    headers,
-  });
-
-  return res.data.documents;
-}
-
-// 거리, 시간 계산
-async function getRoute(startX, startY, endX, endY) {
-  const url = "https://apis-navi.kakaomobility.com/v1/directions";
-  const headers = { Authorization: `KakaoAK ${KAKAO_API_KEY}` };
-
-  const res = await axios.get(url, {
-    params: {
-      origin: `${startX},${startY}`,
-      destination: `${endX},${endY}`,
-    },
-    headers,
-  });
-
-  const summary = res.data.routes?.[0]?.summary;
-  if (!summary) throw new Error("경로 정보를 찾을 수 없습니다.");
-
-  return {
-    distance: summary.distance,
-    duration: summary.duration,
+  const headers = {
+    Authorization: `KakaoAK ${process.env.KAKAO_API_KEY}`,
   };
+  const response = await axios.get(url, {
+    params: { query: address },
+    headers,
+  });
+  const { documents } = response.data;
+  if (documents.length === 0) throw new Error("주소를 찾을 수 없습니다.");
+  const { x, y } = documents[0];
+  return { x, y };
 }
 
-// 정적 지도 이미지 URL
-function generateMapUrl(startX, startY, endX, endY) {
-  const baseUrl = "https://dapi.kakao.com/v2/maps/staticmap";
+// 길찾기 API 호출
+async function getDirection(origin, destination) {
+  const url = "https://apis-navi.kakaomobility.com/v1/directions";
+  const headers = {
+    Authorization: `KakaoAK ${process.env.KAKAO_API_KEY}`,
+  };
+  const response = await axios.get(url, {
+    params: {
+      origin: `${origin.x},${origin.y}`,
+      destination: `${destination.x},${destination.y}`,
+    },
+    headers,
+  });
+  const { distance, duration } = response.data.routes[0].summary;
+  return { distance, duration };
+}
+
+// 지도 이미지 URL 생성
+function getMapImageUrl(start, goal) {
+  const url = "https://dapi.kakao.com/v2/maps/staticmap";
   const params = new URLSearchParams({
     width: "600",
     height: "400",
-    markers: `color:blue|label:S|${startX},${startY}|color:red|label:D|${endX},${endY}`,
+    markers: `${start.x},${start.y}|${goal.x},${goal.y}`,
   });
-  return `${baseUrl}?${params.toString()}`;
+  return `${url}?${params.toString()}`;
 }
 
-// 추천 화장실 API
-app.get("/recommend-restrooms", async (req, res) => {
-  const { address } = req.query;
-  if (!address) return res.status(400).json({ error: "주소가 필요합니다." });
+// GET /route-info?from=주소1&to=주소2
+app.get("/route-info", async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) {
+    return res.status(400).json({ error: "from and to query parameters are required" });
+  }
 
   try {
-    const userCoord = await geocode(address);
-    const restrooms = await searchNearbyRestrooms(userCoord.x, userCoord.y);
+    const origin = await getCoordinatesFromAddress(from);
+    const destination = await getCoordinatesFromAddress(to);
 
-    if (restrooms.length === 0) {
-      return res.status(404).json({ error: "주변에 화장실이 없습니다." });
-    }
-
-    const restroomWithRoute = await Promise.all(
-      restrooms.map(async (r) => {
-        const route = await getRoute(userCoord.x, userCoord.y, r.x, r.y);
-        return {
-          name: r.place_name,
-          address: r.road_address_name || r.address_name,
-          x: r.x,
-          y: r.y,
-          distance: route.distance,
-          duration: route.duration,
-          mapImageUrl: generateMapUrl(userCoord.x, userCoord.y, r.x, r.y),
-        };
-      })
-    );
-
-    const byDistance = [...restroomWithRoute].sort((a, b) => a.distance - b.distance)[0];
-    const byDuration = [...restroomWithRoute].sort((a, b) => a.duration - b.duration)[0];
+    const { distance, duration } = await getDirection(origin, destination);
+    const imageUrl = getMapImageUrl(origin, destination);
 
     res.json({
-      currentLocation: address,
-      recommendations: [
-        {
-          type: "가장 가까운 화장실",
-          ...byDistance,
-        },
-        {
-          type: "가장 빨리 도착하는 화장실",
-          ...byDuration,
-        },
-      ],
+      origin: from,
+      destination: to,
+      distance,
+      duration,
+      imageUrl,
     });
   } catch (error) {
-    console.error("추천 실패:", error.message);
-    res.status(500).json({ error: "추천 실패", details: error.message });
+    console.error(error);
+    res.status(500).json({ error: error.message });
   }
 });
 
