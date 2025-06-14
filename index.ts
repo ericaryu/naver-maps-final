@@ -2,13 +2,9 @@ const express = require("express");
 const axios = require("axios");
 const app = express();
 
-// ✅ Kakao 길찾기 API
+// 1️⃣ 경로 안내 (Kakao Mobility)
 app.get("/get-directions", async (req, res) => {
   const { start, goal } = req.query;
-
-  if (!start || !goal) {
-    return res.status(400).json({ error: "start and goal are required" });
-  }
 
   const [originX, originY] = start.split(",");
   const [destX, destY] = goal.split(",");
@@ -36,7 +32,7 @@ app.get("/get-directions", async (req, res) => {
   }
 });
 
-// ✅ Kakao 정적 지도 이미지 API
+// 2️⃣ 정적 지도 이미지 (Kakao Static Map)
 app.get("/get-map-image", async (req, res) => {
   const { start, goal } = req.query;
 
@@ -55,25 +51,52 @@ app.get("/get-map-image", async (req, res) => {
   const params = {
     width: 600,
     height: 400,
-    markers: `${startX},${startY}|${goalX},${goalY}`,
+    markers: `color:blue|label:S|${startX},${startY}|color:red|label:G|${goalX},${goalY}`,
   };
 
   try {
     const queryString = new URLSearchParams(params).toString();
     const imageUrl = `${url}?${queryString}`;
-    res.status(200).json({ imageUrl });
+    res.json({ imageUrl });
   } catch (error) {
     res.status(500).json({ error: "Failed to generate map image" });
   }
 });
 
-// ✅ 로컬 개발용 포트 설정 (Vercel은 이 부분 무시함)
+// 3️⃣ 주소 → 좌표 (Geocoding)
+app.get("/geocode", async (req, res) => {
+  const { query } = req.query;
+
+  if (!query) {
+    return res.status(400).json({ error: "query is required" });
+  }
+
+  const url = "https://dapi.kakao.com/v2/local/search/address.json";
+  const headers = {
+    Authorization: `KakaoAK ${process.env.KAKAO_API_KEY}`,
+  };
+
+  try {
+    const response = await axios.get(url, {
+      params: { query },
+      headers,
+    });
+
+    res.status(200).json(response.data);
+  } catch (error) {
+    res.status(error.response?.status || 500).json({
+      error: error.message,
+      details: error.response?.data || null,
+    });
+  }
+});
+
+// Local development (optional)
 if (process.env.NODE_ENV !== "production") {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
+    console.log(`Server listening on port ${PORT}`);
   });
 }
 
-// ✅ Vercel 배포용 export
 module.exports = app;
