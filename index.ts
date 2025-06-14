@@ -24,9 +24,9 @@ interface Place {
   groundLevel: boolean;
   isFree: boolean;
   openingHours: string;
-  gateInside?: string;        // ‘게이트 내외 구분’
-  exitNumber?: string;        // ‘(근접) 출입구 번호’
-  detailedLocation?: string;  // ‘상세위치’
+  gateInside?: string;
+  exitNumber?: string;
+  detailedLocation?: string;
   raw?: RawPublicRestroom;
 }
 
@@ -40,7 +40,7 @@ async function getCoordinates(address: string): Promise<{ x: number; y: number }
   return { x: parseFloat(docs[0].x), y: parseFloat(docs[0].y) };
 }
 
-// 2) 카카오맵 화장실 검색 & 필터링
+// 2) 카카오맵 화장실 검색
 async function searchKakaoRestrooms(address: string, filters: any): Promise<Place[]> {
   const { x, y } = await getCoordinates(address);
   const url = "https://dapi.kakao.com/v2/local/search/keyword.json";
@@ -67,39 +67,37 @@ async function searchKakaoRestrooms(address: string, filters: any): Promise<Plac
   );
 }
 
-// 3) 공공데이터: 역사공중화장실
+// 3) 공공데이터 화장실 불러오기
 async function fetchPublicRestrooms(filters: any): Promise<Place[]> {
   const url = "https://api.odcloud.kr/api/15044453/v1/uddi:3f0b1632-3ac0-4bc2-97ef-8fa94fcfb23c";
   const { data } = await axios.get(url, {
     params: { page: 1, perPage: 1000, serviceKey: ODCLOUD_API_KEY },
   });
+
   return (data.data as RawPublicRestroom[])
-    .map(item => {
-      const p: Place = {
-        source: 'public',
-        name: item.역사명
-          ? `${item.역사명} 역사공중화장실`
-          : `${item.소재지도로명주소 || item.소재지지번주소} 공중화장실`,
-        address: item.소재지도로명주소 || item.소재지지번주소,
-        x: parseFloat(item.경도),
-        y: parseFloat(item.위도),
-        distance: NaN,
-        nursingRoom: [
-          item['기저귀교환대설치유무-남자화장실'],
-          item['기저귀교환대설치유무-남자장애인화장실'],
-          item['기저귀교환대설치유무-여자화장실'],
-          item['기저귀교환대설치유유무-여자장애인화장실'],
-        ].some(v => v === 'Y'),
-        groundLevel: item['지상 또는 지하 구분'] === '지상',
-        isFree: true,
-        openingHours: item.개방시간,
-        gateInside: item['게이트 내외 구분'],
-        exitNumber: item['(근접) 출입구 번호'],
-        detailedLocation: item['상세위치'],
-        raw: item,
-      };
-      return p;
-    })
+    .map(item => ({
+      source: 'public',
+      name: item.역사명
+        ? `${item.역사명} 역사공중화장실`
+        : `${item.소재지도로명주소 || item.소재지지번주소} 공중화장실`,
+      address: item.소재지도로명주소 || item.소재지지번주소,
+      x: parseFloat(item.경도),
+      y: parseFloat(item.위도),
+      distance: NaN,
+      nursingRoom: [
+        item['기저귀교환대설치유무-남자화장실'],
+        item['기저귀교환대설치유무-남자장애인화장실'],
+        item['기저귀교환대설치유무-여자화장실'],
+        item['기저귀교환대설치유유무-여자장애인화장실'],
+      ].some(v => v === 'Y'),
+      groundLevel: item['지상 또는 지하 구분'] === '지상',
+      isFree: true,
+      openingHours: item.개방시간,
+      gateInside: item['게이트 내외 구분'],
+      exitNumber: item['(근접) 출입구 번호'],
+      detailedLocation: item['상세위치'],
+      raw: item,
+    }))
     .filter(p =>
       (filters.nursingRoom == null || p.nursingRoom === filters.nursingRoom) &&
       (filters.groundLevel == null || p.groundLevel === filters.groundLevel) &&
@@ -107,7 +105,7 @@ async function fetchPublicRestrooms(filters: any): Promise<Place[]> {
     );
 }
 
-// 4) 거리 계산 (Haversine)
+// 4) 거리 계산
 function calcDistance(a: { x: number; y: number }, b: { x: number; y: number }): number {
   const toRad = (d: number) => (d * Math.PI) / 180;
   const R = 6371000;
@@ -119,7 +117,27 @@ function calcDistance(a: { x: number; y: number }, b: { x: number; y: number }):
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-// 메인 엔드포인트
+// 5) 응답 필터링 함수
+function shapePlaceOutput(place: Place, filters: any): Partial<Place> {
+  const base: Partial<Place> = {
+    source: place.source,
+    type: place.type,
+    name: place.name,
+    address: place.address,
+    x: place.x,
+    y: place.y,
+    distance: place.distance,
+  };
+
+  if (filters.nursingRoom != null) base.nursingRoom = place.nursingRoom;
+  if (filters.groundLevel != null) base.groundLevel = place.groundLevel;
+  if (filters.isFree != null) base.isFree = place.isFree;
+  if (filters.showOpeningHours === 'true') base.openingHours = place.openingHours;
+
+  return base;
+}
+
+// 6) 메인 엔드포인트
 app.get('/recommend-restrooms', async (req, res) => {
   const address = (req.query.address || '').toString();
   if (!address) return res.status(400).json({ error: 'address required' });
@@ -128,6 +146,7 @@ app.get('/recommend-restrooms', async (req, res) => {
     nursingRoom: req.query.nursingRoom === 'true' ? true : req.query.nursingRoom === 'false' ? false : null,
     groundLevel: req.query.groundLevel === 'true' ? true : req.query.groundLevel === 'false' ? false : null,
     isFree: req.query.isFree === 'true' ? true : req.query.isFree === 'false' ? false : null,
+    showOpeningHours: req.query.showOpeningHours === 'true' ? 'true' : null,
   };
 
   try {
@@ -141,7 +160,9 @@ app.get('/recommend-restrooms', async (req, res) => {
       .slice(0, 2)
       .map((p, i) => ({ ...p, type: i === 0 ? 'closest' : 'second_closest' }));
 
-    res.json({ currentLocation: address, recommendations: combined });
+    const result = combined.map(p => shapePlaceOutput(p, filters));
+
+    res.json({ currentLocation: address, recommendations: result });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'internal error' });
