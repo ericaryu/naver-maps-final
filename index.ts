@@ -52,3 +52,4 @@ if (process.env.NODE_ENV !== "production") {
 module.exports = app;
 
 // Trigger Vercel production deploy
+// Trigger redeploy to apply environment variables
