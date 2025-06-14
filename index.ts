@@ -2,30 +2,26 @@ const express = require("express");
 const axios = require("axios");
 const app = express();
 
-// 주소 → 좌표
+// 1) 주소 → 좌표 변환 (키워드 검색 기반)
 async function getCoordinatesFromAddress(address) {
-  const url = "https://dapi.kakao.com/v2/local/search/address.json";
-  const headers = {
-    Authorization: `KakaoAK ${process.env.KAKAO_REST_API_KEY}`,
-  };
+  const url = "https://dapi.kakao.com/v2/local/search/keyword.json";
+  const headers = { Authorization: `KakaoAK ${process.env.KAKAO_REST_API_KEY}` };
 
   const response = await axios.get(url, {
-    params: { query: address },
+    params: { query: address, size: 1 },
     headers,
   });
 
-  const { documents } = response.data;
-  if (documents.length === 0) throw new Error("주소를 찾을 수 없습니다.");
-  const { x, y } = documents[0];
-  return { x, y };
+  const docs = response.data.documents;
+  if (!docs.length) throw new Error("주소를 찾을 수 없습니다.");
+
+  return { x: docs[0].x, y: docs[0].y };
 }
 
-// 키워드 기반 장소 검색 (화장실)
+// 2) 키워드 기반 주변 화장실 검색 (반경 1km, 상위 5개)
 async function searchNearbyRestrooms(x, y) {
   const url = "https://dapi.kakao.com/v2/local/search/keyword.json";
-  const headers = {
-    Authorization: `KakaoAK ${process.env.KAKAO_REST_API_KEY}`,
-  };
+  const headers = { Authorization: `KakaoAK ${process.env.KAKAO_REST_API_KEY}` };
 
   const response = await axios.get(url, {
     params: {
@@ -39,17 +35,20 @@ async function searchNearbyRestrooms(x, y) {
     headers,
   });
 
-  return response.data.documents.map(doc => ({
+  const docs = response.data.documents;
+  if (!docs.length) throw new Error("주변에 화장실이 없습니다.");
+
+  return docs.map(doc => ({
     name: doc.place_name,
     address: doc.road_address_name || doc.address_name,
     x: doc.x,
     y: doc.y,
-    distance: doc.distance ? parseInt(doc.distance, 10) : null,
+    distance: doc.distance != null ? parseInt(doc.distance, 10) : null,
     mapImageUrl: getMapImageUrl({ x, y }, { x: doc.x, y: doc.y }),
   }));
 }
 
-// 정적 지도 이미지 생성
+// 3) 정적 지도 URL 생성
 function getMapImageUrl(start, goal) {
   const url = "https://dapi.kakao.com/v2/maps/staticmap";
   const params = new URLSearchParams({
@@ -60,7 +59,7 @@ function getMapImageUrl(start, goal) {
   return `${url}?${params.toString()}`;
 }
 
-// 메인 API
+// 4) 메인 엔드포인트
 app.get("/recommend-restrooms", async (req, res) => {
   const { address } = req.query;
   if (!address) {
@@ -71,23 +70,20 @@ app.get("/recommend-restrooms", async (req, res) => {
     const userLoc = await getCoordinatesFromAddress(address);
     const restrooms = await searchNearbyRestrooms(userLoc.x, userLoc.y);
 
-    if (restrooms.length === 0) {
-      return res.status(404).json({ error: "주변 1km 이내에 화장실이 없습니다." });
-    }
-
-    // 거리 기준 상위 2개
-    const topTwo = restrooms.slice(0, 2);
+    // 거리순 상위 2개
+    const recommendations = restrooms.slice(0, 2).map((r, i) => ({
+      type: i === 0 ? "가장 가까운 화장실" : "두 번째로 가까운 화장실",
+      ...r,
+    }));
 
     res.json({
       currentLocation: address,
-      recommendations: topTwo.map((r, i) => ({
-        type: i === 0 ? "가장 가까운 화장실" : "두 번째로 가까운 화장실",
-        ...r,
-      })),
+      recommendations,
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: err.message });
+    const code = err.message.includes("없습니다") ? 404 : 500;
+    res.status(code).json({ error: err.message });
   }
 });
 
