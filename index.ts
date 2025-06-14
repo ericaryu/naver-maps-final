@@ -5,7 +5,7 @@ const app = express();
 // 1) 주소 → 좌표 변환 (키워드 검색 기반)
 async function getCoordinatesFromAddress(address) {
   const url = "https://dapi.kakao.com/v2/local/search/keyword.json";
-  const headers = { Authorization: `KakaoAK ${process.env.KAKAO_REST_API_KEY}` };
+  const headers = { Authorization: `KakaoAK ${process.env.KAKAO_API_KEY}` };
 
   const response = await axios.get(url, {
     params: { query: address, size: 1 },
@@ -21,7 +21,7 @@ async function getCoordinatesFromAddress(address) {
 // 2) 키워드 기반 주변 화장실 검색 (반경 1km, 상위 5개)
 async function searchNearbyRestrooms(x, y) {
   const url = "https://dapi.kakao.com/v2/local/search/keyword.json";
-  const headers = { Authorization: `KakaoAK ${process.env.KAKAO_REST_API_KEY}` };
+  const headers = { Authorization: `KakaoAK ${process.env.KAKAO_API_KEY}` };
 
   const response = await axios.get(url, {
     params: {
