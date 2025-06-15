@@ -170,3 +170,33 @@ app.get('/recommend-restrooms', async (req, res) => {
 });
 
 export default app;
+
+// 7) 역 이름 기반 요약 정보 반환
+app.get('/station-restroom-info', async (req, res) => {
+  const station = (req.query.station || "").toString().trim();
+  if (!station) {
+    return res.status(400).json({ error: "station 파라미터가 필요합니다." });
+  }
+
+  try {
+    const publicList = await fetchPublicRestrooms({}); // 기존에 정의된 함수 그대로 사용
+    const matched = publicList.find(p =>
+      p.name.includes(station) || (p.raw && p.raw["역사명"] && p.raw["역사명"].includes(station))
+    );
+
+    if (!matched) {
+      return res.status(404).json({ error: `${station}역 화장실 정보를 찾을 수 없습니다.` });
+    }
+
+    res.json({
+      station: station,
+      restroomName: matched.name,
+      exitNumber: matched.exitNumber || "정보 없음",
+      gateInside: matched.gateInside || "정보 없음",
+      detailedLocation: matched.detailedLocation || "정보 없음",
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "서버 오류" });
+  }
+});
