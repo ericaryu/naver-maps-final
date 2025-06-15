@@ -3,15 +3,12 @@ import axios from "axios";
 
 const app = express();
 
-// 환경변수 확인
 const { KAKAO_API_KEY, ODCLOUD_API_KEY } = process.env;
 if (!KAKAO_API_KEY) throw new Error("Missing KAKAO_API_KEY");
 if (!ODCLOUD_API_KEY) throw new Error("Missing ODCLOUD_API_KEY");
 
-// Raw 공공데이터 컬럼 전체 관리
 type RawPublicRestroom = Record<string, any>;
 
-// 응답 Place 타입 정의
 interface Place {
   source: 'kakao' | 'public';
   type: 'closest' | 'second_closest';
@@ -28,9 +25,25 @@ interface Place {
   exitNumber?: string;
   detailedLocation?: string;
   raw?: RawPublicRestroom;
+  score?: number;
 }
 
-// 1) 주소 -> 좌표 변환
+// 📌 랭킹 점수 계산 함수
+function computeRankingScore(p: Place, filters: any): number {
+  let score = 0;
+  if (!isNaN(p.distance)) score += 100 - Math.min(p.distance / 10, 100);
+  if (filters.nursingRoom === true && p.nursingRoom) score += 50;
+  if (filters.groundLevel === true && p.groundLevel) score += 30;
+  if (filters.isFree === true && p.isFree) score += 10;
+  return score;
+}
+
+// 📌 단순 질의 여부 판단 (추후 GPT로 확장 가능)
+function isSimpleQuery(query: string): boolean {
+  const complexKeywords = ['노인', '유모차', '아이', '편한', '장애인', '불편'];
+  return !complexKeywords.some(k => query.includes(k));
+}
+
 async function getCoordinates(address: string): Promise<{ x: number; y: number }> {
   const url = "https://dapi.kakao.com/v2/local/search/keyword.json";
   const headers = { Authorization: `KakaoAK ${KAKAO_API_KEY}` };
@@ -40,7 +53,6 @@ async function getCoordinates(address: string): Promise<{ x: number; y: number }
   return { x: parseFloat(docs[0].x), y: parseFloat(docs[0].y) };
 }
 
-// 2) 카카오맵 화장실 검색
 async function searchKakaoRestrooms(address: string, filters: any): Promise<Place[]> {
   const { x, y } = await getCoordinates(address);
   const url = "https://dapi.kakao.com/v2/local/search/keyword.json";
@@ -67,7 +79,6 @@ async function searchKakaoRestrooms(address: string, filters: any): Promise<Plac
   );
 }
 
-// 3) 공공데이터 화장실 불러오기
 async function fetchPublicRestrooms(filters: any): Promise<Place[]> {
   const url = "https://api.odcloud.kr/api/15044453/v1/uddi:3f0b1632-3ac0-4bc2-97ef-8fa94fcfb23c";
   const { data } = await axios.get(url, {
@@ -105,7 +116,6 @@ async function fetchPublicRestrooms(filters: any): Promise<Place[]> {
     );
 }
 
-// 4) 거리 계산
 function calcDistance(a: { x: number; y: number }, b: { x: number; y: number }): number {
   const toRad = (d: number) => (d * Math.PI) / 180;
   const R = 6371000;
@@ -117,7 +127,6 @@ function calcDistance(a: { x: number; y: number }, b: { x: number; y: number }):
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-// 5) 응답 필터링 함수
 function shapePlaceOutput(place: Place, filters: any): Partial<Place> {
   const base: Partial<Place> = {
     source: place.source,
@@ -133,11 +142,12 @@ function shapePlaceOutput(place: Place, filters: any): Partial<Place> {
   if (filters.groundLevel != null) base.groundLevel = place.groundLevel;
   if (filters.isFree != null) base.isFree = place.isFree;
   if (filters.showOpeningHours === 'true') base.openingHours = place.openingHours;
+  if (place.score != null) base['score'] = place.score;
 
   return base;
 }
 
-// 6) 메인 엔드포인트
+// 📍 추천 엔드포인트
 app.get('/recommend-restrooms', async (req, res) => {
   const address = (req.query.address || '').toString();
   if (!address) return res.status(400).json({ error: 'address required' });
@@ -154,14 +164,26 @@ app.get('/recommend-restrooms', async (req, res) => {
     const kakaoList = await searchKakaoRestrooms(address, filters);
     const publicList = await fetchPublicRestrooms(filters);
 
+    const fullQuery = [
+      address,
+      req.query.nursingRoom,
+      req.query.groundLevel,
+      req.query.isFree
+    ].join(' ');
+
+    const useSimpleRanking = isSimpleQuery(fullQuery);
+
     const combined = [...kakaoList, ...publicList]
-      .map(p => ({ ...p, distance: calcDistance(userLoc, p) }))
-      .sort((a, b) => a.distance - b.distance)
+      .map(p => {
+        const distance = calcDistance(userLoc, p);
+        const score = useSimpleRanking ? 0 : computeRankingScore({ ...p, distance }, filters);
+        return { ...p, distance, score };
+      })
+      .sort((a, b) => useSimpleRanking ? a.distance - b.distance : b.score - a.score)
       .slice(0, 2)
       .map((p, i) => ({ ...p, type: i === 0 ? 'closest' : 'second_closest' }));
 
     const result = combined.map(p => shapePlaceOutput(p, filters));
-
     res.json({ currentLocation: address, recommendations: result });
   } catch (err) {
     console.error(err);
@@ -169,17 +191,13 @@ app.get('/recommend-restrooms', async (req, res) => {
   }
 });
 
-export default app;
-
-// 7) 역 이름 기반 요약 정보 반환
+// 📍 역 기반 요약 정보
 app.get('/station-restroom-info', async (req, res) => {
   const station = (req.query.station || "").toString().trim();
-  if (!station) {
-    return res.status(400).json({ error: "station 파라미터가 필요합니다." });
-  }
+  if (!station) return res.status(400).json({ error: "station 파라미터가 필요합니다." });
 
   try {
-    const publicList = await fetchPublicRestrooms({}); // 기존에 정의된 함수 그대로 사용
+    const publicList = await fetchPublicRestrooms({});
     const matched = publicList.find(p =>
       p.name.includes(station) || (p.raw && p.raw["역사명"] && p.raw["역사명"].includes(station))
     );
@@ -189,7 +207,7 @@ app.get('/station-restroom-info', async (req, res) => {
     }
 
     res.json({
-      station: station,
+      station,
       restroomName: matched.name,
       exitNumber: matched.exitNumber || "정보 없음",
       gateInside: matched.gateInside || "정보 없음",
@@ -200,3 +218,5 @@ app.get('/station-restroom-info', async (req, res) => {
     res.status(500).json({ error: "서버 오류" });
   }
 });
+
+export default app;
