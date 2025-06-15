@@ -28,19 +28,25 @@ interface Place {
   score?: number;
 }
 
-// 📌 랭킹 점수 계산 함수
-function computeRankingScore(p: Place, filters: any): number {
+function computeRankingScore(p: Place, weights: { [key: string]: boolean }): number {
   let score = 0;
   if (!isNaN(p.distance)) score += 100 - Math.min(p.distance / 10, 100);
-  if (filters.nursingRoom === true && p.nursingRoom) score += 50;
-  if (filters.groundLevel === true && p.groundLevel) score += 30;
-  if (filters.isFree === true && p.isFree) score += 10;
+  if (weights.nursingRoom && p.nursingRoom) score += 50;
+  if (weights.groundLevel && p.groundLevel) score += 30;
+  if (weights.isFree && p.isFree) score += 10;
   return score;
 }
 
-// 📌 단순 질의 여부 판단 (추후 GPT로 확장 가능)
+function getRankingWeightsFromQuery(queryText: string): { [key: string]: boolean } {
+  return {
+    nursingRoom: /수유|기저귀|아기|아이/.test(queryText),
+    groundLevel: /지상|엘리베이터|노약자|유모차|휠체어|장애인/.test(queryText),
+    isFree: /무료|공짜/.test(queryText),
+  };
+}
+
 function isSimpleQuery(query: string): boolean {
-  const complexKeywords = ['노인', '유모차', '아이', '편한', '장애인', '불편'];
+  const complexKeywords = ['노인', '유모차', '아이', '편한', '장애인', '불편', '수유', '기저귀'];
   return !complexKeywords.some(k => query.includes(k));
 }
 
@@ -147,7 +153,6 @@ function shapePlaceOutput(place: Place, filters: any): Partial<Place> {
   return base;
 }
 
-// 📍 추천 엔드포인트
 app.get('/recommend-restrooms', async (req, res) => {
   const address = (req.query.address || '').toString();
   if (!address) return res.status(400).json({ error: 'address required' });
@@ -164,19 +169,18 @@ app.get('/recommend-restrooms', async (req, res) => {
     const kakaoList = await searchKakaoRestrooms(address, filters);
     const publicList = await fetchPublicRestrooms(filters);
 
-    const fullQuery = [
+    const fullQueryText = [
       address,
-      req.query.nursingRoom,
-      req.query.groundLevel,
-      req.query.isFree
+      req.query.q || ''
     ].join(' ');
 
-    const useSimpleRanking = isSimpleQuery(fullQuery);
+    const useSimpleRanking = isSimpleQuery(fullQueryText);
+    const rankingWeights = getRankingWeightsFromQuery(fullQueryText);
 
     const combined = [...kakaoList, ...publicList]
       .map(p => {
         const distance = calcDistance(userLoc, p);
-        const score = useSimpleRanking ? 0 : computeRankingScore({ ...p, distance }, filters);
+        const score = useSimpleRanking ? 0 : computeRankingScore({ ...p, distance }, rankingWeights);
         return { ...p, distance, score };
       })
       .sort((a, b) => useSimpleRanking ? a.distance - b.distance : b.score - a.score)
@@ -191,7 +195,6 @@ app.get('/recommend-restrooms', async (req, res) => {
   }
 });
 
-// 📍 역 기반 요약 정보
 app.get('/station-restroom-info', async (req, res) => {
   const station = (req.query.station || "").toString().trim();
   if (!station) return res.status(400).json({ error: "station 파라미터가 필요합니다." });
