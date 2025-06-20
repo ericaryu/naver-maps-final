@@ -1,5 +1,7 @@
 {
   "version": 2,
   "builds": [{ "src": "api/index.ts", "use": "@vercel/node" }],
-  "routes": [{ "src": "/recommend-restrooms", "dest": "/api/index.ts" }]
+  "routes": [
+    { "src": "/recommend-restrooms", "dest": "/api/index.ts" }
+  ]
 }
