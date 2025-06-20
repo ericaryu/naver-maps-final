@@ -1,6 +1,6 @@
-const axios = require("axios");
+import axios from "axios";
 
-module.exports = async function(req, res) {
+export default async function handler(req, res) {
   const KAKAO_API_KEY = process.env.KAKAO_API_KEY;
   const ODCLOUD_API_KEY = process.env.ODCLOUD_API_KEY;
   if (!KAKAO_API_KEY || !ODCLOUD_API_KEY) {
@@ -131,4 +131,4 @@ module.exports = async function(req, res) {
     console.error(err);
     return res.status(500).json({ error: 'Server error', detail: err.message });
   }
-};
+}
