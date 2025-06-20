@@ -1,7 +1,7 @@
 import axios from "axios";
-import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { VercelRequest, VercelResponse } from "@vercel/node";
 
-default export async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { KAKAO_API_KEY, ODCLOUD_API_KEY } = process.env;
   if (!KAKAO_API_KEY || !ODCLOUD_API_KEY) {
     return res.status(500).json({ error: "Missing Kakao or ODCLOUD API key" });
