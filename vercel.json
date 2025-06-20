@@ -1,7 +1,9 @@
 {
   "version": 2,
-  "builds": [{ "src": "api/index.ts", "use": "@vercel/node-serverless" }],
+  "builds": [
+    { "src": "api/index.js", "use": "@vercel/node" }
+  ],
   "routes": [
-    { "src": "/recommend-restrooms", "dest": "/api/index.ts" }
+    { "src": "/recommend-restrooms", "dest": "/api/index.js" }
   ]
 }
