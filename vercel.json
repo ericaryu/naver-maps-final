@@ -1,9 +1,11 @@
 {
   "version": 2,
-  "builds": [
-    { "src": "api/index.js", "use": "@vercel/node" }
-  ],
+  "functions": {
+    "api/express.ts": {
+      "runtime": "nodejs18.x"
+    }
+  },
   "routes": [
-    { "src": "/recommend-restrooms", "dest": "/api/index.js" }
+    { "src": "/(.*)", "dest": "/api/express.ts" }
   ]
 }
