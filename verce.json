@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "functions": {
+    "api/express.ts": {
+      "runtime": "nodejs18.x"
+    }
+  },
+  "routes": [
+    { "src": "/(.*)", "dest": "/api/express.ts" }
+  ]
+}

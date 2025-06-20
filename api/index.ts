@@ -1,4 +1,3 @@
-// server.js
 const express = require("express");
 const axios = require("axios");
 const app = express();
@@ -63,7 +62,7 @@ async function fetchPublicRestrooms() {
   });
   return (data.data || []).map(item => ({
     source: "public",
-    name: item.역사명 ? `${item.역사명} 역사공중화장실` : `${item.소재지도로명주소 || item.소재지지번주소} 공중화장실`,
+    name: `${item.역사명} 역사공중화장실`,
     address: item.소재지도로명주소 || item.소재지지번주소,
     x: parseFloat(item.경도),
     y: parseFloat(item.위도),
@@ -105,6 +104,7 @@ async function getTopTwoRestrooms(user) {
   const kakaoList = await searchKakaoRestrooms(user.x, user.y);
   const publicList = await fetchPublicRestrooms();
 
+  // 공공데이터 항목에 거리와 mapImageUrl 추가
   const pubWithDist = publicList.map(place => {
     const dist = Math.round(calcDistance(user, place));
     return {
@@ -114,8 +114,10 @@ async function getTopTwoRestrooms(user) {
     };
   });
 
+  // 두 리스트 합치기
   const all = [...kakaoList, ...pubWithDist];
 
+  // 거리순 정렬 후 상위 2개
   return all
     .sort((a, b) => a.distance - b.distance)
     .slice(0, 2);
@@ -132,6 +134,7 @@ app.get("/recommend-restrooms", async (req, res) => {
     const userLoc = await getCoordinatesFromAddress(address);
     const topTwo = await getTopTwoRestrooms(userLoc);
 
+    // (1)번 형식에 맞춰 type 부여
     const recommendations = topTwo.map((r, i) => ({
       type: i === 0 ? "가장 가까운 화장실" : "두 번째로 가까운 화장실",
       source: r.source,
@@ -156,3 +159,4 @@ app.get("/recommend-restrooms", async (req, res) => {
 });
 
 module.exports = app;
+
